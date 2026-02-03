@@ -1,5 +1,6 @@
 import os
 import base64
+import asyncio
 import threading
 from flask import Flask
 from telethon import TelegramClient, events
@@ -76,11 +77,20 @@ async def on_edit_message(event):
 
 def run_bot():
     print("🚀 Iniciando bot...", flush=True)
-    client.connect()
-    if not client.is_user_authorized():
-        raise RuntimeError("❌ Sesión inválida. Re-crea la .session y vuelve a generar SESSION_B64.")
-    print("✅ Bot autorizado. Escuchando...", flush=True)
-    client.run_until_disconnected()
+
+    # ✅ Crear un event loop en este thread (Python 3.13 lo requiere)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def main():
+        await client.connect()
+        if not await client.is_user_authorized():
+            raise RuntimeError("❌ Sesión inválida. Re-crea la .session y vuelve a generar SESSION_B64.")
+        print("✅ Bot autorizado. Escuchando...", flush=True)
+        await client.run_until_disconnected()
+
+    loop.run_until_complete(main())
+
 
 
 # ----------------- WEB (para Render) -----------------
