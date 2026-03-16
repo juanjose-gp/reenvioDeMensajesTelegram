@@ -4,6 +4,7 @@ import threading
 from flask import Flask
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.errors import MessageNotModifiedError
 
 # ---------------- CONFIG ----------------
 SESSION_STRING = os.environ["SESSION_STRING"]
@@ -16,8 +17,8 @@ client = TelegramClient(StringSession(SESSION_STRING), api_id, api_hash)
 # RUTAS DE FOROS: (chat origen, topic_id) -> chat destino
 # -------------------------------------------------
 FORUM_PAIRS = {
-    (-1003805449629, 3): -1003832259307,   # tema PRO / topic 3
-    (-1003805449629, 2): -1003786011342,   # tema BASIC / topic 2
+    (-1003805449629, 3): -1003832259307,  # tema PRO / topic 3
+    (-1003805449629, 2): -1003786011342,  # tema BASIC / topic 2
 }
 
 ORIGENES = list({chat_id for chat_id, _ in FORUM_PAIRS.keys()})
@@ -151,48 +152,81 @@ async def forward(event):
     except Exception as e:
         print(f"[ERROR][REENVIO] {repr(e)}", flush=True)
 
+    # ---------------- EDICION DE MENSAJES ----------------
 
-# ---------------- EDICION DE MENSAJES ----------------
-@client.on(events.MessageEdited(chats=ORIGENES))
-async def on_edit(event):
-    try:
-        origen = event.chat_id
-        destino, meta = resolver_destino(event)
-        route_type, map_key, topic_id = meta
+    @client.on(events.MessageEdited(chats=ORIGENES))
+    async def on_edit(event):
+        try:
+            origen = event.chat_id
+            destino, meta = resolver_destino(event)
+            route_type, map_key, topic_id = meta
 
-        if not destino:
-            print(
-                f"[EDIT] Sin destino para origen={origen} | topic_id={topic_id}",
-                flush=True
-            )
-            return
+            if not destino:
+                print(
+                    f"[EDIT] Sin destino para origen={origen} | topic_id={topic_id}",
+                    flush=True
+                )
+                return
 
-        origen_msg_id = event.message.id
-        destino_msg_id = mapa_por_origen.get(map_key, {}).get(origen_msg_id)
+            origen_msg_id = event.message.id
+            destino_msg_id = mapa_por_origen.get(map_key, {}).get(origen_msg_id)
 
-        if not destino_msg_id:
-            print(
-                f"[EDIT] No encontré mapeo para editar "
-                f"{origen}:{origen_msg_id} | map_key={map_key}",
-                flush=True
-            )
-            return
+            if not destino_msg_id:
+                print(
+                    f"[EDIT] No encontré mapeo para editar "
+                    f"{origen}:{origen_msg_id} | map_key={map_key}",
+                    flush=True
+                )
+                return
 
-        nuevo_texto = event.message.text or ""
+            nuevo_texto = event.message.text or ""
 
-        await client.edit_message(destino, destino_msg_id, nuevo_texto)
-        print(
-            f"[EDIT] Editado | "
-            f"route_type={route_type} | "
-            f"topic_id={topic_id} | "
-            f"{origen}:{origen_msg_id} -> {destino}:{destino_msg_id}",
-            flush=True
-        )
+            # Si la edición ahora tiene media (foto, archivo, etc.)
+            if event.message.media:
+                try:
+                    await client.edit_message(
+                        destino,
+                        destino_msg_id,
+                        text=nuevo_texto,
+                        file=event.message.media
+                    )
 
-    except Exception as e:
-        print(f"[ERROR][EDIT] {repr(e)}", flush=True)
+                    print(
+                        f"[EDIT] Editado con media | "
+                        f"{origen}:{origen_msg_id} -> {destino}:{destino_msg_id}",
+                        flush=True
+                    )
 
+                except MessageNotModifiedError:
+                    print(
+                        f"[EDIT] Sin cambios reales en media/texto: {origen}:{origen_msg_id}",
+                        flush=True
+                    )
 
+                return
+
+            # Si solo cambió texto
+            try:
+                await client.edit_message(
+                    destino,
+                    destino_msg_id,
+                    text=nuevo_texto
+                )
+
+                print(
+                    f"[EDIT] Editado texto | "
+                    f"{origen}:{origen_msg_id} -> {destino}:{destino_msg_id}",
+                    flush=True
+                )
+
+            except MessageNotModifiedError:
+                print(
+                    f"[EDIT] Sin cambios reales en texto: {origen}:{origen_msg_id}",
+                    flush=True
+                )
+
+        except Exception as e:
+            print(f"[ERROR][EDIT] {repr(e)}", flush=True)
 # ---------------- BOT LOOP ----------------
 def run_bot():
     print("[SYSTEM] Iniciando bot...", flush=True)
@@ -213,6 +247,7 @@ def run_bot():
 
 # ---------------- WEB ----------------
 app = Flask(__name__)
+
 
 @app.get("/")
 def health():
