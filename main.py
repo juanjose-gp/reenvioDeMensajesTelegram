@@ -12,16 +12,49 @@ api_hash = os.environ["API_HASH"]
 
 client = TelegramClient(StringSession(SESSION_STRING), api_id, api_hash)
 
-PAIRS = [
-    (-1003020297428, -1003728976509),
-    #subir  a git paar es server
-]
+# -------------------------------------------------
+# RUTAS DE FOROS: (chat origen, topic_id) -> chat destino
+# -------------------------------------------------
+FORUM_PAIRS = {
+    (-1003805449629, 3): -1003832259307,   # tema PRO / topic 3
+    (-1003805449629, 2): -1003786011342,   # tema BASIC / topic 2
+}
 
-ORIGENES = [o for o, _ in PAIRS]
-pair_map = dict(PAIRS)
+ORIGENES = list({chat_id for chat_id, _ in FORUM_PAIRS.keys()})
 
-# origen_chat_id -> {mensaje_origen_id: mensaje_destino_id}
-mapa_por_origen = {origen: {} for origen, _ in PAIRS}
+# clave_origen -> {mensaje_origen_id: mensaje_destino_id}
+# clave_origen = (chat_id, topic_id) para foros
+mapa_por_origen = {forum_key: {} for forum_key in FORUM_PAIRS.keys()}
+
+
+def extraer_topic_id(event):
+    reply = getattr(event.message, "reply_to", None)
+    if not reply:
+        return None
+
+    # prioridad: top_id real del topic
+    top_id = getattr(reply, "reply_to_top_id", None)
+    if top_id is not None:
+        return top_id
+
+    # fallback: algunos mensajes traen solo reply_to_msg_id
+    msg_id = getattr(reply, "reply_to_msg_id", None)
+    if getattr(reply, "forum_topic", False) and msg_id is not None:
+        return msg_id
+
+    return None
+
+
+def resolver_destino(event):
+    chat_id = event.chat_id
+    topic_id = extraer_topic_id(event)
+
+    if topic_id is not None:
+        destino = FORUM_PAIRS.get((chat_id, topic_id))
+        if destino:
+            return destino, ("forum", (chat_id, topic_id), topic_id)
+
+    return None, (None, None, topic_id)
 
 
 # ---------------- DEBUG MENSAJES ----------------
@@ -30,6 +63,7 @@ async def debug(event):
     try:
         title = getattr(event.chat, "title", None) or getattr(event.chat, "username", None) or "SIN_TITULO"
         reply = getattr(event.message, "reply_to", None)
+        topic_id = extraer_topic_id(event)
 
         print(
             "[DEBUG] "
@@ -40,7 +74,8 @@ async def debug(event):
             f"forum={getattr(event.chat, 'forum', None)} | "
             f"reply_to_msg_id={getattr(reply, 'reply_to_msg_id', None) if reply else None} | "
             f"reply_to_top_id={getattr(reply, 'reply_to_top_id', None) if reply else None} | "
-            f"forum_topic={getattr(reply, 'forum_topic', None) if reply else None}",
+            f"forum_topic={getattr(reply, 'forum_topic', None) if reply else None} | "
+            f"topic_id_resuelto={topic_id}",
             flush=True
         )
     except Exception as e:
@@ -52,10 +87,14 @@ async def debug(event):
 async def forward(event):
     try:
         origen = event.chat_id
-        destino = pair_map.get(origen)
+        destino, meta = resolver_destino(event)
+        route_type, map_key, topic_id = meta
 
         if not destino:
-            print(f"[REENVIO] Sin destino para origen={origen}", flush=True)
+            print(
+                f"[REENVIO] Sin destino para origen={origen} | topic_id={topic_id}",
+                flush=True
+            )
             return
 
         sent_msg = None
@@ -64,10 +103,12 @@ async def forward(event):
         reply_to_destino = None
         if event.message.reply_to and getattr(event.message.reply_to, "reply_to_msg_id", None):
             replied_origen_id = event.message.reply_to.reply_to_msg_id
-            reply_to_destino = mapa_por_origen[origen].get(replied_origen_id)
+            reply_to_destino = mapa_por_origen.get(map_key, {}).get(replied_origen_id)
 
             print(
                 f"[REENVIO] Reply detectado | "
+                f"route_type={route_type} | "
+                f"map_key={map_key} | "
                 f"origen={origen}:{event.message.id} | "
                 f"responde_a={replied_origen_id} | "
                 f"reply_to_destino={reply_to_destino}",
@@ -92,9 +133,11 @@ async def forward(event):
             )
 
         if sent_msg:
-            mapa_por_origen[origen][event.message.id] = sent_msg.id
+            mapa_por_origen[map_key][event.message.id] = sent_msg.id
             print(
-                f"[REENVIO] Copiado: "
+                f"[REENVIO] Copiado | "
+                f"route_type={route_type} | "
+                f"topic_id={topic_id} | "
                 f"{origen}:{event.message.id} -> {destino}:{sent_msg.id}",
                 flush=True
             )
@@ -114,24 +157,34 @@ async def forward(event):
 async def on_edit(event):
     try:
         origen = event.chat_id
-        destino = pair_map.get(origen)
+        destino, meta = resolver_destino(event)
+        route_type, map_key, topic_id = meta
 
         if not destino:
-            print(f"[EDIT] Sin destino para origen={origen}", flush=True)
+            print(
+                f"[EDIT] Sin destino para origen={origen} | topic_id={topic_id}",
+                flush=True
+            )
             return
 
         origen_msg_id = event.message.id
-        destino_msg_id = mapa_por_origen[origen].get(origen_msg_id)
+        destino_msg_id = mapa_por_origen.get(map_key, {}).get(origen_msg_id)
 
         if not destino_msg_id:
-            print(f"[EDIT] No encontré mapeo para editar {origen}:{origen_msg_id}", flush=True)
+            print(
+                f"[EDIT] No encontré mapeo para editar "
+                f"{origen}:{origen_msg_id} | map_key={map_key}",
+                flush=True
+            )
             return
 
         nuevo_texto = event.message.text or ""
 
         await client.edit_message(destino, destino_msg_id, nuevo_texto)
         print(
-            f"[EDIT] Editado: "
+            f"[EDIT] Editado | "
+            f"route_type={route_type} | "
+            f"topic_id={topic_id} | "
             f"{origen}:{origen_msg_id} -> {destino}:{destino_msg_id}",
             flush=True
         )
@@ -151,6 +204,8 @@ def run_bot():
         await client.start()
         me = await client.get_me()
         print(f"[SYSTEM] Bot activo como: {me.id}", flush=True)
+        print(f"[SYSTEM] ORIGENES: {ORIGENES}", flush=True)
+        print(f"[SYSTEM] FORUM_PAIRS: {FORUM_PAIRS}", flush=True)
         await client.run_until_disconnected()
 
     loop.run_until_complete(main())
@@ -158,7 +213,6 @@ def run_bot():
 
 # ---------------- WEB ----------------
 app = Flask(__name__)
-
 
 @app.get("/")
 def health():
