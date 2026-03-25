@@ -24,7 +24,7 @@ client = TelegramClient(StringSession(SESSION_STRING), api_id, api_hash)
 FORUM_PAIRS = {
     (-1003805449629, 3): -1003832259307,  # tema PRO / topic 3
     (-1003805449629, 2): -1003786011342,  # tema BASIC / topic 2
-    (-1003805449629, 2417): -100,         # intermedio
+    (-1003805449629, 2417): -1003554150595,         # intermedio
 }
 
 ORIGENES = list({chat_id for chat_id, _ in FORUM_PAIRS.keys()})
