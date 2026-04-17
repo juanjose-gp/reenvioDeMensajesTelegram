@@ -24,7 +24,8 @@ client = TelegramClient(StringSession(SESSION_STRING), api_id, api_hash)
 FORUM_PAIRS = {
     (-1003805449629, 3): -1003832259307,  # tema PRO / topic 3
     (-1003805449629, 2): -1003786011342,  # tema BASIC / topic 2
-    (-1003805449629, 2417): -1003554150595,         # intermedio
+    (-1003805449629, 2417): -1003554150595,  # intermedio
+    (-1002678732268, None): -1003945443622,
 }
 
 ORIGENES = list({chat_id for chat_id, _ in FORUM_PAIRS.keys()})
@@ -58,10 +59,11 @@ def resolver_destino(event):
     chat_id = event.chat_id
     topic_id = extraer_topic_id(event)
 
-    if topic_id is not None:
-        destino = FORUM_PAIRS.get((chat_id, topic_id))
-        if destino:
-            return destino, ("forum", (chat_id, topic_id), topic_id)
+    destino = FORUM_PAIRS.get((chat_id, topic_id))
+
+    if destino:
+        tipo = "forum" if topic_id is not None else "general"
+        return destino, (tipo, (chat_id, topic_id), topic_id)
 
     return None, (None, None, topic_id)
 
@@ -297,9 +299,11 @@ def run_bot():
 # ---------------- WEB ----------------
 app = Flask(__name__)
 
+
 @app.get("/")
 def health():
     return "OK", 200
+
 
 @app.get("/ping")
 def ping():
